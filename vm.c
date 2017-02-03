@@ -177,12 +177,21 @@ trace_on(void)
 {
     struct perf_event_attr attr;
     pid_t parent_pid, child_pid;
-    int poll_fd;
+    int poll_fd, pipe_fds[2], res;
     struct perf_event_mmap_page *header;
     void *base, *data, *aux;
     int page_size = getpagesize();
+    unsigned char byte;
 
     VDEBUG("Tracing hot loop");
+
+    /*
+     * Processes synchronise via a pipe handshake. In a real VM you would
+     * probably use a thread with proper synchronisation primitives.
+     */
+    if (pipe(pipe_fds) != 0) {
+        err(EXIT_FAILURE, "pipe");
+    }
 
     parent_pid = getpid();
     child_pid = fork();
@@ -197,10 +206,27 @@ trace_on(void)
         /* NOREACH*/
         break;
     default:
-        /* Parent */
-        sleep(1); /* XXX proper handshake */
+        /* Parent -- wait for tracer to be ready, then resume */
+        close(pipe_fds[1]);
+        VDEBUG("Wait for tracer...");
+        for (;;) {
+            res = read(pipe_fds[0], &byte, 1);
+            if (res == -1) {
+                if (errno == EINTR) {
+                    continue;
+                } else {
+                    err(EXIT_FAILURE, "read");
+                }
+            } else if (res == 0) { // end of file, i.e. resume
+                break;
+            } else {
+                VDEBUG("Unexpected read result");
+                exit(EXIT_FAILURE);
+            }
+        }
+        VDEBUG("Resume under tracer...");
+        close(pipe_fds[0]);
         return;
-        break;
     }
 
     /*
@@ -246,6 +272,11 @@ trace_on(void)
         err(EXIT_FAILURE, "open");
     }
 
+    /* Closing the write end of the pipe tells the VM to resume */
+    close(pipe_fds[0]);
+    close(pipe_fds[1]);
+
+    TDEBUG("Tracer initialised");
     poll_loop(poll_fd, out_fd, header, aux);
 
     close(poll_fd);
