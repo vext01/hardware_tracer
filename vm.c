@@ -39,9 +39,9 @@
 #define AUX_PAGES 8192
 
 /* Protos */
-void trace_on(void);
+int trace_on(void);
 void interpreter_loop(void);
-void poll_loop(int, int, struct perf_event_mmap_page *, void *);
+void poll_loop(int, int, struct perf_event_mmap_page *, void *, int);
 void read_circular_buf(void *, __u64, __u64, __u64 *, int);
 void write_buf_to_disk(int, void *, __u64);
 
@@ -104,21 +104,21 @@ read_circular_buf(void *buf, __u64 size, __u64 head_monotonic, __u64 *tail_p, in
  * Take trace data out of the AUX buffer.
  */
 void
-poll_loop(int poll_fd, int out_fd, struct perf_event_mmap_page *mmap_header, void *aux)
+poll_loop(int perf_fd, int out_fd, struct perf_event_mmap_page *mmap_header,
+    void *aux, int stop_tracer_fd)
 {
-    struct pollfd pfd = { poll_fd, POLLIN | POLLHUP, 0 };
-    int n_events = 0;
+    struct pollfd pfds[2] = {
+        {perf_fd, POLLIN | POLLHUP, 0},
+        {stop_tracer_fd, POLLHUP, 0}
+    };
+    int n_events = 0, terminate = 0;
     size_t num_wakes = 0;
 
     while (1) {
-        n_events = poll(&pfd, 1, INFTIM);
+        n_events = poll(pfds, 2, INFTIM);
 
-        /* Since we have only one fd, result should be 1 */
-        if (n_events != 1) {
-            err(EXIT_FAILURE, "poll");
-        }
-
-        if (pfd.revents & POLLIN) {
+        if (pfds[0].revents & POLLIN) {
+            /* We were awoken to read out trace info */
             num_wakes++;
             TDEBUG("Wake");
             TDEBUG("aux_head=  0x%010llu", mmap_header->aux_head);
@@ -128,11 +128,23 @@ poll_loop(int poll_fd, int out_fd, struct perf_event_mmap_page *mmap_header, voi
 
             read_circular_buf(aux, mmap_header->aux_size,
                 mmap_header->aux_head, &mmap_header->aux_tail, out_fd);
-        } else if (pfd.revents & POLLHUP) {
+
+            if (terminate) {
+                /* The tracer was switched off */
+                break;
+            }
+        }
+
+        if ((!terminate) && (pfds[1].revents & POLLHUP)) {
+            /* Turn the tracer off after the next buffer read */
+            /* XXX can we flush and read now somehow? */
+            TDEBUG("Tracing terminated");
+            terminate = 1;
+        }
+
+        if (pfds[0].revents & POLLHUP) {
+            /* Parent exited */
             TDEBUG("VM terminated");
-            break;
-        } else {
-            err(EXIT_FAILURE, "unexpected poll events: %d", pfd.revents);
             break;
         }
     }
@@ -143,7 +155,7 @@ void
 interpreter_loop()
 {
 	long sum = 4;
-	int i;
+	int i, stop_tracer_fd;
     volatile int j;
 
     VDEBUG("Running interpreter loop...");
@@ -151,7 +163,7 @@ interpreter_loop()
 	for (i = 0; i < LARGE; i++) {
         /* "JIT Merge Point" */
 		if (i == HOT_THRESHOLD) {
-			trace_on();
+			stop_tracer_fd = trace_on();
 		}
 
         for (j = 0; j < 10000; j++) {
@@ -162,22 +174,21 @@ interpreter_loop()
             }
         }
 
-#if 0
-        /* XXX Turn off tracer after one loop iteration */
 		if (i == HOT_THRESHOLD) {
+            VDEBUG("Tell tracer to stop");
+            close(stop_tracer_fd);
 		}
-#endif
 	}
 	VDEBUG("loop done: %ld", sum);
 }
 
 
-void
+int
 trace_on(void)
 {
     struct perf_event_attr attr;
     pid_t parent_pid, child_pid;
-    int poll_fd, pipe_fds[2], res;
+    int poll_fd, start_tracer_fds[2], stop_tracer_fds[2], res;
     struct perf_event_mmap_page *header;
     void *base, *data, *aux;
     int page_size = getpagesize();
@@ -189,7 +200,10 @@ trace_on(void)
      * Processes synchronise via a pipe handshake. In a real VM you would
      * probably use a thread with proper synchronisation primitives.
      */
-    if (pipe(pipe_fds) != 0) {
+    if (pipe(start_tracer_fds) != 0) {
+        err(EXIT_FAILURE, "pipe");
+    }
+    if (pipe(stop_tracer_fds) != 0) {
         err(EXIT_FAILURE, "pipe");
     }
 
@@ -207,10 +221,11 @@ trace_on(void)
         break;
     default:
         /* Parent -- wait for tracer to be ready, then resume */
-        close(pipe_fds[1]);
+        close(start_tracer_fds[1]);
+        close(stop_tracer_fds[0]);
         VDEBUG("Wait for tracer...");
         for (;;) {
-            res = read(pipe_fds[0], &byte, 1);
+            res = read(start_tracer_fds[0], &byte, 1);
             if (res == -1) {
                 if (errno == EINTR) {
                     continue;
@@ -225,8 +240,8 @@ trace_on(void)
             }
         }
         VDEBUG("Resume under tracer...");
-        close(pipe_fds[0]);
-        return;
+        close(start_tracer_fds[0]);
+        return stop_tracer_fds[1];
     }
 
     /*
@@ -273,14 +288,16 @@ trace_on(void)
     }
 
     /* Closing the write end of the pipe tells the VM to resume */
-    close(pipe_fds[0]);
-    close(pipe_fds[1]);
+    close(start_tracer_fds[0]);
+    close(start_tracer_fds[1]);
+    close(stop_tracer_fds[1]);
 
     TDEBUG("Tracer initialised");
-    poll_loop(poll_fd, out_fd, header, aux);
+    poll_loop(poll_fd, out_fd, header, aux, stop_tracer_fds[0]);
 
     close(poll_fd);
     close(out_fd);
+    close(stop_tracer_fds[0]);
     exit(EXIT_SUCCESS);
 }
 
