@@ -1,4 +1,5 @@
 DIR != pwd
+PATCHES = ${DIR}/patches
 
 LIBIPT_SRC = ${DIR}/src/processor-trace
 LIBIPT_BUILD = ${DIR}/build/libipt
@@ -23,6 +24,7 @@ inst/libipt: dirs
 
 inst/ptdump: inst/libipt
 	mkdir ${PTDUMP_BUILD}
+	cd ${PTDUMP_SRC} && patch -Ep2 < ${PATCHES}/ptdump.diff
 	cd ${PTDUMP_BUILD} && \
 		cmake ${PTDUMP_SRC} \
 		    -DCMAKE_INSTALL_PREFIX:PATH=${PTDUMP_INST} \
