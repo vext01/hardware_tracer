@@ -111,7 +111,7 @@ poll_loop(int perf_fd, int out_fd, struct perf_event_mmap_page *mmap_header,
         {perf_fd, POLLIN | POLLHUP, 0},
         {stop_tracer_fd, POLLHUP, 0}
     };
-    int n_events = 0, terminate = 0;
+    int n_events = 0;
     size_t num_wakes = 0;
 
     while (1) {
@@ -129,17 +129,17 @@ poll_loop(int perf_fd, int out_fd, struct perf_event_mmap_page *mmap_header,
             read_circular_buf(aux, mmap_header->aux_size,
                 mmap_header->aux_head, &mmap_header->aux_tail, out_fd);
 
-            if (terminate) {
+            if (pfds[1].fd == -1) {
                 /* The tracer was switched off */
                 break;
             }
         }
 
-        if ((!terminate) && (pfds[1].revents & POLLHUP)) {
+        if (pfds[1].revents & POLLHUP) {
             /* Turn the tracer off after the next buffer read */
             /* XXX can we flush and read now somehow? */
             TDEBUG("Tracing terminated");
-            terminate = 1;
+            pfds[1].fd = -1; /* no more events on this fd please */
         }
 
         if (pfds[0].revents & POLLHUP) {
