@@ -13,6 +13,7 @@
 #include <sys/mman.h>
 #include <poll.h>
 #include <inttypes.h>
+#include <errno.h>
 
 #include <limits.h>
 #include <linux/perf_event.h>
@@ -40,7 +41,9 @@
 /* Protos */
 void trace_on(void);
 void interpreter_loop(void);
-void poll_loop(int, int, struct perf_event_mmap_page *);
+void poll_loop(int, int, struct perf_event_mmap_page *, void *);
+void read_circular_buf(void *, __u64, __u64, __u64 *, int);
+void write_buf_to_disk(int, void *, __u64);
 
 /* Linux poll(2) man page:
  *
@@ -51,14 +54,57 @@ void poll_loop(int, int, struct perf_event_mmap_page *);
 #define INFTIM -1
 #endif
 
+void write_buf_to_disk(int fd, void *buf, __u64 size) {
+    __u64 written = 0;
+    ssize_t res;
+
+    while (written < size) {
+        res = write(fd, buf, size);
+        if (res == -1) {
+            if (errno == EINTR) {
+                /* Write interrupted before anything written */
+                continue;
+            }
+            err(EXIT_FAILURE, "write");
+        }
+        written += res;
+    }
+}
+
 /*
- * Take trace data out of the AUX buffer.
+ * Read data out of a circular buffer
  *
- * Let's assume each trace fits into the buffer, so we don't have to update the
- * tail pointer or perform a wrapped-around read.
+ * Tail is passed as a pointer so we can mutate it.
  */
 void
-poll_loop(int poll_fd, int out_fd, struct perf_event_mmap_page *mmap_header)
+read_circular_buf(void *buf, __u64 size, __u64 head_monotonic, __u64 *tail_p, int out_fd) {
+    __u64 tail = *tail_p;
+    __u64 head = head_monotonic % size; /* head must be manually wrapped */
+
+    if (tail <= head) {
+        /* No wrap-around */
+        TDEBUG("read with no wrap");
+        write_buf_to_disk(out_fd, buf + tail, head - tail);
+    } else {
+        /* Wrap-around */
+        TDEBUG("read with wrap");
+        write_buf_to_disk(out_fd, buf + tail, size - tail);
+        write_buf_to_disk(out_fd, buf, head);
+    }
+
+    /*
+     * Update buffer tail, thus marking the space we just read as re-usable.
+     * Note that the head is the buffer head at the time this func was called.
+     * The head may have advanced since then, which is fine.
+     */
+    *tail_p = head;
+}
+
+/*
+ * Take trace data out of the AUX buffer.
+ */
+void
+poll_loop(int poll_fd, int out_fd, struct perf_event_mmap_page *mmap_header, void *aux)
 {
     struct pollfd pfd = { poll_fd, POLLIN | POLLHUP, 0 };
     int n_events = 0;
@@ -75,14 +121,13 @@ poll_loop(int poll_fd, int out_fd, struct perf_event_mmap_page *mmap_header)
         if (pfd.revents & POLLIN) {
             num_wakes++;
             TDEBUG("Wake");
-            TDEBUG("aux_head=0x%llu", mmap_header->aux_head);
-            TDEBUG("aux_tail=0x%llu", mmap_header->aux_tail);
-            TDEBUG("aux_offset=0x%llu", mmap_header->aux_offset);
-            TDEBUG("aux_size=0x%llu", mmap_header->aux_size);
-            /* Assumes tail is 0  */
-            TDEBUG("aux buffer fill %f%%",
-                (float) mmap_header->aux_head / mmap_header->aux_size * 100);
-            (void) out_fd; /* XXX Write trace to disk */
+            TDEBUG("aux_head=  0x%010llu", mmap_header->aux_head);
+            TDEBUG("aux_tail=  0x%010llu", mmap_header->aux_tail);
+            TDEBUG("aux_offset=0x%010llu", mmap_header->aux_offset);
+            TDEBUG("aux_size=  0x%010llu", mmap_header->aux_size);
+
+            read_circular_buf(aux, mmap_header->aux_size,
+                mmap_header->aux_head, &mmap_header->aux_tail, out_fd);
         } else if (pfd.revents & POLLHUP) {
             TDEBUG("VM terminated");
             break;
@@ -201,7 +246,7 @@ trace_on(void)
         err(EXIT_FAILURE, "open");
     }
 
-    poll_loop(poll_fd, out_fd, header);
+    poll_loop(poll_fd, out_fd, header, aux);
 
     close(poll_fd);
     close(out_fd);
