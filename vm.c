@@ -137,7 +137,13 @@ poll_loop(int perf_fd, int out_fd, struct perf_event_mmap_page *mmap_header,
 
         if (pfds[1].revents & POLLHUP) {
             /* Turn the tracer off after the next buffer read */
-            /* XXX can we flush and read now somehow? */
+
+            /*
+             * XXX can we flush and read now somehow?
+             *
+             * http://stackoverflow.com/questions/42066651/perf-event-open-is-it-possible-to-explicitly-flush-the-data-aux-mmap-buffers
+             */
+
             TDEBUG("Tracing terminated");
             pfds[1].fd = -1; /* no more events on this fd please */
         }
