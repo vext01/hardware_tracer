@@ -116,6 +116,9 @@ poll_loop(int perf_fd, int out_fd, struct perf_event_mmap_page *mmap_header,
 
     while (1) {
         n_events = poll(pfds, 2, INFTIM);
+        if (n_events == -1) {
+            err(EXIT_FAILURE, "poll");
+        }
 
         if (pfds[0].revents & POLLIN) {
             /* We were awoken to read out trace info */
@@ -277,6 +280,7 @@ trace_on(void)
 
     header = base;
     data = base + header->data_offset;
+    (void) data; /* XXX We will need this in the future to detect packet loss */
     header->aux_offset = header->data_offset + header->data_size;
     header->aux_size = AUX_PAGES * page_size;
 
