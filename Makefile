@@ -9,7 +9,7 @@ deps:
 	cd deps && ${MAKE}
 
 clean:
-	rm -f vm
+	rm -f vm trace.data trace.dec dis.sh maps
 
 run: vm
 	sudo ./vm
