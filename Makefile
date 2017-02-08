@@ -1,7 +1,12 @@
-#CC = clang
 CC = gcc
 CFLAGS += -Wall -Wextra -g
-all: vm
+
+.PHONY: deps
+
+all: deps vm
+
+deps:
+	cd deps && ${MAKE}
 
 clean:
 	rm -f vm
