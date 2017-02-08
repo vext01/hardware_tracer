@@ -24,6 +24,7 @@
 
 #define LARGE 15000
 #define HOT_THRESHOLD 1027
+#define TRACE_OUTPUT "trace.data"
 
 /* Debug helpers */
 #define DPRINTF(who, x...)						                \
@@ -316,7 +317,7 @@ trace_on(void)
     }
 
     /* Open output file */
-    int out_fd = open("/tmp/trace", O_WRONLY | O_CREAT | O_TRUNC);
+    int out_fd = open(TRACE_OUTPUT, O_WRONLY | O_CREAT | O_TRUNC);
     if (out_fd < 0) {
         err(EXIT_FAILURE, "open");
     }
