@@ -2,6 +2,8 @@
  * Dummy VM
  */
 
+#define _GNU_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -44,6 +46,28 @@ void interpreter_loop(void);
 void poll_loop(int, int, struct perf_event_mmap_page *, void *, int);
 void read_circular_buf(void *, __u64, __u64, __u64 *, int);
 void write_buf_to_disk(int, void *, __u64);
+void stash_maps(void);
+
+void
+stash_maps(void)
+{
+    char *cmd;
+    pid_t pid;
+    int res;
+
+    VDEBUG("Stash linker maps");
+
+    pid = getpid();
+    res = asprintf(&cmd, "cp /proc/%d/maps maps", pid);
+    if (res == -1) {
+        err(EXIT_FAILURE, "asprintf");
+    }
+
+    res = system(cmd);
+    if (res != 0) {
+        err(EXIT_FAILURE, "system");
+    }
+}
 
 /* Linux poll(2) man page:
  *
@@ -314,6 +338,7 @@ trace_on(void)
 int
 main(void)
 {
+    stash_maps();
 	interpreter_loop();
 	return (EXIT_SUCCESS);
 }
