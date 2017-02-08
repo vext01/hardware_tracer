@@ -201,7 +201,7 @@ interpreter_loop()
 		}
 
         for (j = 0; j < 10000; j++) {
-            if (i % 2 == 0) {
+            if (j % 2 == 0) {
                 sum += i * 2 % 33;
             } else {
                 sum += i * 5 % 67;
