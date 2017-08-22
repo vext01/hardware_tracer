@@ -27,12 +27,12 @@
 #define TRACE_OUTPUT "trace.data"
 
 /* Debug helpers */
-#define DPRINTF(who, x...)						                \
-    do {								                        \
-            fprintf(stderr, "[%s:%d](%s:%s:%d): ",              \
-                who, getpid(), __func__, __FILE__, __LINE__);	\
-            fprintf(stderr, x);                                 \
-            fprintf(stderr, "\n");                              \
+#define DPRINTF(who, x...)                                      \
+    do {                                                        \
+        fprintf(stderr, "[%s:%d](%s:%s:%d): ",              \
+            who, getpid(), __func__, __FILE__, __LINE__);   \
+        fprintf(stderr, x);                                 \
+        fprintf(stderr, "\n");                              \
     } while (0)
 #define TDEBUG(x...)    DPRINTF("TRACER", x);
 #define VDEBUG(x...)    DPRINTF("VM", x);
@@ -188,17 +188,17 @@ poll_loop(int perf_fd, int out_fd, struct perf_event_mmap_page *mmap_header,
 void
 interpreter_loop()
 {
-	long sum = 4;
-	int i, stop_tracer_fd;
+    long sum = 4;
+    int i, stop_tracer_fd;
     volatile int j;
 
     VDEBUG("Running interpreter loop...");
 
-	for (i = 0; i < LARGE; i++) {
+    for (i = 0; i < LARGE; i++) {
         /* "JIT Merge Point" */
-		if (i == HOT_THRESHOLD) {
-			stop_tracer_fd = trace_on();
-		}
+        if (i == HOT_THRESHOLD) {
+            stop_tracer_fd = trace_on();
+        }
 
         for (j = 0; j < 10000; j++) {
             if (j % 2 == 0) {
@@ -208,12 +208,12 @@ interpreter_loop()
             }
         }
 
-		if (i == HOT_THRESHOLD) {
+        if (i == HOT_THRESHOLD) {
             VDEBUG("Tell tracer to stop");
             close(stop_tracer_fd);
-		}
-	}
-	VDEBUG("loop done: %ld", sum);
+        }
+    }
+    VDEBUG("loop done: %ld", sum);
 }
 
 
@@ -340,6 +340,6 @@ int
 main(void)
 {
     stash_maps();
-	interpreter_loop();
-	return (EXIT_SUCCESS);
+    interpreter_loop();
+    return (EXIT_SUCCESS);
 }
