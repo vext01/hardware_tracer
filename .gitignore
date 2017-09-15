@@ -1,5 +1,7 @@
 vm
+analyse
 trace.data
 trace.dec
 dis.sh
 maps
+*.o

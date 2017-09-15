@@ -1,15 +1,40 @@
 CC = gcc
-CFLAGS += -Wall -Wextra -g
+CFLAGS += -Wall -Wextra -g -I${PT_PRIVATE_INC}
+THIS_DIR = ${shell pwd}
 
-.PHONY: deps
+# Public libipt
+IPT_LIB = deps/inst/libipt/lib
+IPT_INC = deps/inst/libipt/include
 
-all: deps vm
+# Borrowing a private helper function from libipt
+PT_PRIVATE_INC = deps/src/processor-trace/libipt/internal/include
+PT_CPU_SRC = deps/src/processor-trace/libipt/src
+PT_CPUID_SRC = deps/src/processor-trace/libipt/src/posix
+
+.PHONY: deps pt_cpu.c
+
+all: deps vm analyse
 
 deps:
 	cd deps && ${MAKE}
 
 clean:
-	rm -f vm trace.data trace.dec dis.sh maps
+	rm -f vm trace.data trace.dec dis.sh maps pt_cpu.o pt_cpuid.o
+
+#pt_cpu.c:
+#	cp ${PT_CPU_SRC}/$@ $@
+#pt_cpu.h:
+#	cp ${PT_CPU_INC}/$@ $@
+
+pt_cpu.o: ${PT_CPU_SRC}/pt_cpu.c
+	#ln -s ${IPT_INC}/intel-pt.h  # needs the header in ${PWD}
+	${CC} -c -I${IPT_INC} ${CFLAGS} $< -o $@
+
+pt_cpuid.o: ${PT_CPUID_SRC}/pt_cpuid.c
+	${CC} -c ${CFLAGS} $< -o $@
+
+analyse: analyse.c pt_cpu.o pt_cpuid.o
+	${CC} ${CFLAGS} -I${IPT_INC} ${LDFLAGS} $^ -o $@
 
 run: vm
 	sudo ./vm
