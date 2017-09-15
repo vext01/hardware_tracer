@@ -1,9 +1,5 @@
 CC = gcc
 CFLAGS += -Wall -Wextra -g -I${PT_PRIVATE_INC}
-THIS_DIR = ${shell pwd}
-
-# Public libipt
-IPT_LIB = deps/inst/libipt/lib
 IPT_INC = deps/inst/libipt/include
 
 # Borrowing a private helper function from libipt
@@ -19,15 +15,9 @@ deps:
 	cd deps && ${MAKE}
 
 clean:
-	rm -f vm trace.data trace.dec dis.sh maps pt_cpu.o pt_cpuid.o
-
-#pt_cpu.c:
-#	cp ${PT_CPU_SRC}/$@ $@
-#pt_cpu.h:
-#	cp ${PT_CPU_INC}/$@ $@
+	rm -f vm trace.data trace.dec dis.sh maps pt_cpu.o pt_cpuid.o analyse
 
 pt_cpu.o: ${PT_CPU_SRC}/pt_cpu.c
-	#ln -s ${IPT_INC}/intel-pt.h  # needs the header in ${PWD}
 	${CC} -c -I${IPT_INC} ${CFLAGS} $< -o $@
 
 pt_cpuid.o: ${PT_CPUID_SRC}/pt_cpuid.c
