@@ -21,6 +21,7 @@
 #include <linux/perf_event.h>
 #include <linux/perf_event.h>
 #include <linux/hw_breakpoint.h>
+#include <sys/ioctl.h>
 
 #define LARGE 15000
 #define HOT_THRESHOLD 1027
@@ -283,14 +284,27 @@ trace_on(void)
      */
     TDEBUG("Tracer initialising");
 
+    // attr.sample_id_all = 1; XXX YYY needed?
     memset(&attr, 0, sizeof(attr));
     attr.size = sizeof(attr);
     attr.type = 7; /* XXX Read from /sys/bus/event_source/devices/intel_pt/type */
     attr.size = sizeof(struct perf_event_attr);
-    attr.exclude_kernel = 1;
-    /* Wake when 25% of AUX buf written */
-    attr.aux_watermark = AUX_PAGES / 4 * getpagesize();
 
+    /* Stuff to exclude */
+    attr.exclude_kernel = 1;
+    attr.exclude_hv = 1; // hypervisor
+
+    /* Pure magic */
+    //attr.config = 50382338;
+    //attr.read_format = 4;
+
+    /* Start disabled */
+    attr.disabled = 1;
+
+    /* Wake when 25% of AUX buf written */
+    //attr.aux_watermark = AUX_PAGES / 4 * getpagesize();
+
+    /* XXX use named syscall function */
     poll_fd = syscall(SYS_perf_event_open, &attr, parent_pid, -1, -1, 0);
     if (poll_fd == -1) {
         err(EXIT_FAILURE, "syscall");
@@ -325,10 +339,15 @@ trace_on(void)
     /* Closing the write end of the pipe tells the VM to resume */
     close(start_tracer_fds[0]);
     close(start_tracer_fds[1]);
+    if (ioctl(poll_fd, PERF_EVENT_IOC_ENABLE, 0) < 0)
+        err(EXIT_FAILURE, "ioctl to start tracer");
     close(stop_tracer_fds[1]);
 
     TDEBUG("Tracer initialised");
     poll_loop(poll_fd, out_fd, header, aux, stop_tracer_fds[0]);
+
+    if (ioctl(poll_fd, PERF_EVENT_IOC_DISABLE, 0) < 0)
+        err(EXIT_FAILURE, "ioctl to stop tracer");
 
     close(poll_fd);
     close(out_fd);
