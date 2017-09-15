@@ -260,6 +260,7 @@ trace_on(void)
         close(stop_tracer_fds[0]);
         VDEBUG("Wait for tracer...");
         for (;;) {
+            // XXX this should use poll
             res = read(start_tracer_fds[0], &byte, 1);
             if (res == -1) {
                 if (errno == EINTR) {
