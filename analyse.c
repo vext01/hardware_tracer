@@ -1,5 +1,5 @@
 /*
- * Dummy VM
+ * Analyse packets dumped to disk
  */
 
 #define _GNU_SOURCE
@@ -30,10 +30,11 @@
 
 int
 decode(unsigned char *tbuf, off_t tbuf_len) {
-    //struct pt_pkt_decoder *decoder;
+    struct pt_packet_decoder *decoder;
     struct pt_config config;
     int errcode;
-    //struct pt_packet packet;
+    struct pt_packet packet;
+    u_int64_t pkts_processed = 0;
 
     memset(&config, 0, sizeof(config));
     config.size = sizeof(config);
@@ -45,7 +46,6 @@ decode(unsigned char *tbuf, off_t tbuf_len) {
         err(EXIT_FAILURE, "pt_cpu_read");
     }
 
-#if 0
     decoder = pt_pkt_alloc_decoder(&config);
     if (!decoder)
         err(EXIT_FAILURE, "decoder");
@@ -54,12 +54,21 @@ decode(unsigned char *tbuf, off_t tbuf_len) {
     if (errcode < 0)
         err(EXIT_FAILURE, "sync");
 
-    errcode = pt_pkt_next(decoder, &packet, sizeof(packet));
-    if (errcode < 0)
-        err(EXIT_FAILURE, "next"); // XXX may just be the end
+    for (;;) {
+        errcode = pt_pkt_next(decoder, &packet, sizeof(packet));
+        if (errcode < 0) {
+            if (errcode == -pte_eos) {
+                break;
+            } else {
+                err(EXIT_FAILURE, "pt_pkt_next");
+            }
+        }
+        pkts_processed++;
+    }
 
+    printf("processed %" PRIu64 " packets\n", pkts_processed);
     pt_pkt_free_decoder(decoder);
-#endif
+
     return 0;
 }
 
@@ -75,7 +84,7 @@ main(void)
         err(EXIT_FAILURE, "open");
     }
 
-    /* Figure out the size of the file */
+    /* Map the trace file into virtual address space */
     if (stat(TRACE_OUTPUT, &st) < 0) {
         err(EXIT_FAILURE, "mmap");
     }
@@ -87,6 +96,5 @@ main(void)
 
     decode(map, st.st_size);
 
-    /* map the file into memory */
-    return (EXIT_SUCCESS);
+    return EXIT_SUCCESS;
 }
