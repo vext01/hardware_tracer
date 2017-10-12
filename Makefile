@@ -1,6 +1,7 @@
 CC = gcc
 CFLAGS += -Wall -Wextra -g -I${PT_PRIVATE_INC}
 IPT_INC = deps/inst/libipt/include
+IPT_LIB = deps/inst/libipt/lib
 
 # Borrowing a private helper function from libipt
 PT_PRIVATE_INC = deps/src/processor-trace/libipt/internal/include
@@ -24,7 +25,7 @@ pt_cpuid.o: ${PT_CPUID_SRC}/pt_cpuid.c
 	${CC} -c ${CFLAGS} $< -o $@
 
 analyse: analyse.c pt_cpu.o pt_cpuid.o
-	${CC} ${CFLAGS} -I${IPT_INC} ${LDFLAGS} $^ -o $@
+	${CC} ${CFLAGS} -I${IPT_INC} -Wl,-rpath=${IPT_LIB} -L${IPT_LIB} -lipt ${LDFLAGS} $^ -o $@
 
 run: vm
 	sudo ./vm
