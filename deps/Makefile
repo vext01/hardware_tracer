@@ -1,30 +1,37 @@
 DIR != pwd
-PATCHES = ${DIR}/patches
+INST_DIR = ${DIR}/inst
 
-LIBIPT_SRC = ${DIR}/src/processor-trace
-LIBIPT_BUILD = ${DIR}/build/libipt
-LIBIPT_INST = ${DIR}/inst/libipt
 
-all: inst/libipt
+PROCESSOR_TRACE_REPO = https://github.com/01org/processor-trace.git
+PROCESSOR_TRACE_V = 157be85a957188d22c2802d2067366c0ed9f1264
+PROCESSOR_TRACE_SOURCE = ${DIR}/processor-trace
 
-inst: build
-	mkdir inst
+all: ${INST_DIR}/bin/ptdump
 
-build:
-	mkdir build
+${INST_DIR}:
+	install -d ${INST_DIR}/bin
 
-dirs:
-	mkdir -p build inst
+#
+# Fetch targets
+#
+${PROCESSOR_TRACE_SOURCE}:
+	git clone ${PROCESSOR_TRACE_REPO}
+	cd ${PROCESSOR_TRACE_SOURCE} && git checkout ${PROCESSOR_TRACE_V}
 
-inst/libipt: inst
-	mkdir -p ${LIBIPT_BUILD}
-	cd ${LIBIPT_BUILD} && \
-		cmake -DCMAKE_INSTALL_PREFIX:PATH=${LIBIPT_INST} -DPTDUMP=ON -DPTXED=ON \
-		${LIBIPT_SRC} && make && make install
-	install -d ${LIBIPT_INST}/bin && \
-	install ${LIBIPT_BUILD}/bin/ptdump ${LIBIPT_INST}/bin/
-	install ${LIBIPT_BUILD}/bin/ptxed ${LIBIPT_INST}/bin/
+#
+# Build targets
+#
+# -DPTXED=ON
+${PROCESSOR_TRACE_SOURCE}/bin/ptdump: ${PROCESSOR_TRACE_SOURCE}
+	cd ${PROCESSOR_TRACE_SOURCE} && \
+		cmake -DCMAKE_INSTALL_PREFIX:PATH=${INST_DIR} -DPTDUMP=ON . && ${MAKE}
 
+#
+# Install targets
+#
+${INST_DIR}/bin/ptdump: ${INST_DIR} ${PROCESSOR_TRACE_SOURCE}/bin/ptdump
+	cd ${PROCESSOR_TRACE_SOURCE} && ${MAKE} install
+	install ${PROCESSOR_TRACE_SOURCE}/bin/ptdump ${INST_DIR}/bin/
 
 clean:
-	rm -rf inst build
+	rm -rf ${INST_DIR} ${PROCESSOR_TRACE_SOURCE}

@@ -1,12 +1,12 @@
 CC = gcc
 CFLAGS += -Wall -Wextra -g -I${PT_PRIVATE_INC}
-IPT_INC = deps/inst/libipt/include
-IPT_LIB = deps/inst/libipt/lib
+IPT_INC = deps/inst/include
+IPT_LIB = deps/inst/lib
 
 # Borrowing a private helper function from libipt
-PT_PRIVATE_INC = deps/src/processor-trace/libipt/internal/include
-PT_CPU_SRC = deps/src/processor-trace/libipt/src
-PT_CPUID_SRC = deps/src/processor-trace/libipt/src/posix
+PT_PRIVATE_INC = deps/processor-trace/libipt/internal/include
+PT_CPU_SRC = deps/processor-trace/libipt/src
+PT_CPUID_SRC = deps/processor-trace/libipt/src/posix
 
 .PHONY: deps pt_cpu.c
 
