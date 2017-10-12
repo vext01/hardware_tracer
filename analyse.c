@@ -28,6 +28,42 @@
 
 #define TRACE_OUTPUT "trace.data"
 
+void
+print_packet(struct pt_packet *pkt)
+{
+    switch (pkt->type) {
+    /* transfer instruction pointer */
+    case ppt_tip:
+        printf("tip\n");
+        break;
+    /* taken or not taken */
+    case ppt_tnt_8:
+        printf("tnt_8\n");
+        break;
+    case ppt_tnt_64:
+        printf("tnt_64\n");
+        break;
+    /* flow update */
+    case ppt_fup:
+        printf("fup\n");
+        break;
+    /* Paging information */
+    case ppt_pip:
+        printf("pip\n");
+        break;
+    /* Core to bus ratio change */
+    case ppt_cbr:
+        printf("cbr\n");
+        break;
+    /* Trace buffer overflow */
+    case ppt_ovf:
+        printf("ovf\n");
+        break;
+    default:
+        break;
+    }
+}
+
 int
 decode(unsigned char *tbuf, off_t tbuf_len) {
     struct pt_packet_decoder *decoder;
@@ -63,7 +99,11 @@ decode(unsigned char *tbuf, off_t tbuf_len) {
                 err(EXIT_FAILURE, "pt_pkt_next");
             }
         }
+        print_packet(&packet);
         pkts_processed++;
+        if (pkts_processed == 50) {
+            break;
+        }
     }
 
     printf("processed %" PRIu64 " packets\n", pkts_processed);
