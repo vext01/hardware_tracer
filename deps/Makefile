@@ -19,10 +19,11 @@ dirs:
 inst/libipt: inst
 	mkdir -p ${LIBIPT_BUILD}
 	cd ${LIBIPT_BUILD} && \
-		cmake -DCMAKE_INSTALL_PREFIX:PATH=${LIBIPT_INST} -DPTDUMP=ON \
+		cmake -DCMAKE_INSTALL_PREFIX:PATH=${LIBIPT_INST} -DPTDUMP=ON -DPTXED=ON \
 		${LIBIPT_SRC} && make && make install
 	install -d ${LIBIPT_INST}/bin && \
 	install ${LIBIPT_BUILD}/bin/ptdump ${LIBIPT_INST}/bin/
+	install ${LIBIPT_BUILD}/bin/ptxed ${LIBIPT_INST}/bin/
 
 
 clean:

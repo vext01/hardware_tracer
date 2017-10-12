@@ -1,6 +1,3 @@
 [submodule "deps/processor-trace"]
 	path = deps/processor-trace
 	url = https://github.com/01org/processor-trace.git
-[submodule "deps/src/processor-trace"]
-	path = deps/src/processor-trace
-	url = https://github.com/01org/processor-trace.git
