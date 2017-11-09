@@ -27,6 +27,9 @@ pt_cpuid.o: ${PT_CPUID_SRC}/pt_cpuid.c
 analyse: analyse.c pt_cpu.o pt_cpuid.o
 	${CC} ${CFLAGS} -I${IPT_INC} -Wl,-rpath=${IPT_LIB} -L${IPT_LIB} -lipt ${LDFLAGS} $^ -o $@
 
+# get instructions
+# ./deps/inst/bin/ptxed -v --cpu auto --pt trace.pt --raw vm:<base-addr> | less
+
 run: vm
 	sudo ./vm
 

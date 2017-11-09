@@ -39,10 +39,10 @@ ${MBUILD_SOURCE}:
 #
 ${PROCESSOR_TRACE_SOURCE}/bin/ptdump: ${PROCESSOR_TRACE_SOURCE} ${XED_SOURCE}/obj/libxed.so
 	cd ${PROCESSOR_TRACE_SOURCE} && \
-		env CFLAGS"=-I${DIR}/${XED_SOURCE}/include/public/xed -I${DIR}/${XED_SOURCE}/obj" \
-		LDFLAGS=-L${DIR}/${XED_SOURCE}/obj \
+		env CFLAGS"=-I${DIR}/${XED_SOURCE}/include/public/xed -I${DIR}/${XED_SOURCE}/obj -Wno-error -g" \
+		LDFLAGS="-L${DIR}/${XED_SOURCE}/obj -Wl,-rpath=${DIR}/${XED_SOURCE}/obj" \
 		cmake -DCMAKE_INSTALL_PREFIX:PATH=${INST_DIR} \
-		-DPTDUMP=ON -DPTXED=ON . && ${MAKE}
+		-DPTDUMP=ON -DPTXED=ON -DSIDEBAND=ON -DFEATURE_ELF=ON -DDEVBUILD=ON . && ${MAKE}
 
 ${XED_SOURCE}/obj/libxed.so: ${XED_SOURCE} ${MBUILD_SOURCE}
 	cd ${XED_SOURCE} && ${PYTHON} mfile.py --shared
@@ -53,6 +53,7 @@ ${XED_SOURCE}/obj/libxed.so: ${XED_SOURCE} ${MBUILD_SOURCE}
 ${INST_DIR}/bin/ptdump: ${INST_DIR} ${PROCESSOR_TRACE_SOURCE}/bin/ptdump
 	cd ${PROCESSOR_TRACE_SOURCE} && ${MAKE} install
 	install ${PROCESSOR_TRACE_SOURCE}/bin/ptdump ${INST_DIR}/bin/
+	install ${PROCESSOR_TRACE_SOURCE}/bin/ptxed ${INST_DIR}/bin/
 
 clean:
 	rm -rf ${INST_DIR} ${PROCESSOR_TRACE_SOURCE} ${XED_SOURCE} ${MBUILD_SOURCE}
