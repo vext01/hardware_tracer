@@ -8,7 +8,7 @@ PT_PRIVATE_INC = deps/processor-trace/libipt/internal/include
 PT_CPU_SRC = deps/processor-trace/libipt/src
 PT_CPUID_SRC = deps/processor-trace/libipt/src/posix
 
-.PHONY: deps pt_cpu.c
+.PHONY: deps pt_cpu.c dis-trace
 
 all: deps vm analyse
 
@@ -27,6 +27,10 @@ pt_cpuid.o: ${PT_CPUID_SRC}/pt_cpuid.c
 analyse: analyse.c pt_cpu.o pt_cpuid.o
 	${CC} ${CFLAGS} -I${IPT_INC} -Wl,-rpath=${IPT_LIB} -L${IPT_LIB} -lipt ${LDFLAGS} $^ -o $@
 
+vm: vm.c
+	${CC} ${CFLAGS} -pthread ${LDFLAGS} $^ -o $@
+
+
 # get instructions
 # ./deps/inst/bin/ptxed -v --cpu auto --pt trace.pt --raw vm:<base-addr> | less
 
@@ -39,3 +43,7 @@ run: vm
 	@echo "make disasemble script"
 	base=`head -1  maps | awk '{sub(/-.*/, "", $$1); print "0x" $$1}'` && \
 	     echo "#!/bin/sh\nr2 -B $${base} vm" > dis.sh
+
+dis-trace:
+	base=`awk '$$2=="r-xp" && $$6~"vm" {split($$1,flds,"-"); print flds[1]}' maps` && \
+		sudo ./deps/inst/bin/ptxed -v --cpu auto --pt trace.data --raw vm:0x$${base} | less
