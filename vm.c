@@ -16,6 +16,7 @@
 #include <poll.h>
 #include <inttypes.h>
 #include <errno.h>
+#include <pthread.h>
 
 #include <limits.h>
 #include <linux/perf_event.h>
@@ -42,13 +43,24 @@
 #define DATA_PAGES 1024
 #define AUX_PAGES 8192
 
+struct tracer_ctx {
+    /* tracer thread itself */
+    pthread_t           tracer_thread;
+    /* thread synchronisation stuff */
+    pthread_cond_t      tracer_init_cv;
+    pthread_mutex_t     tracer_init_mutex;
+    /* pipe used to tell the poll loop that the interp loop is finished */
+    int                 loop_done_fds[2];
+};
+
 /* Protos */
-int trace_on(void);
+void trace_on(struct tracer_ctx *);
 void interpreter_loop(void);
-void poll_loop(int, int, struct perf_event_mmap_page *, void *, int);
+void poll_loop(int, int, struct perf_event_mmap_page *, void *, struct tracer_ctx *);
 void read_circular_buf(void *, __u64, __u64, __u64 *, int);
 void write_buf_to_disk(int, void *, __u64);
 void stash_maps(void);
+void *do_tracer(void *);
 
 void
 stash_maps(void)
@@ -131,11 +143,11 @@ read_circular_buf(void *buf, __u64 size, __u64 head_monotonic, __u64 *tail_p, in
  */
 void
 poll_loop(int perf_fd, int out_fd, struct perf_event_mmap_page *mmap_header,
-    void *aux, int stop_tracer_fd)
+    void *aux, struct tracer_ctx *tr_ctx)
 {
     struct pollfd pfds[2] = {
         {perf_fd, POLLIN | POLLHUP, 0},
-        {stop_tracer_fd, POLLHUP, 0}
+        {tr_ctx->loop_done_fds[0], POLLHUP, 0}
     };
     int n_events = 0;
     size_t num_wakes = 0;
@@ -190,15 +202,18 @@ void
 interpreter_loop()
 {
     long sum = 4;
-    int i, stop_tracer_fd;
+    int i;
     volatile int j;
+    struct tracer_ctx tr_ctx;
+
+    memset(&tr_ctx, 0, sizeof(tr_ctx));
 
     VDEBUG("Running interpreter loop...");
 
     for (i = 0; i < LARGE; i++) {
         /* "JIT Merge Point" */
         if (i == HOT_THRESHOLD) {
-            stop_tracer_fd = trace_on();
+            trace_on(&tr_ctx);
         }
 
         for (j = 0; j < 10000; j++) {
@@ -211,74 +226,47 @@ interpreter_loop()
 
         if (i == HOT_THRESHOLD) {
             VDEBUG("Tell tracer to stop");
-            close(stop_tracer_fd);
+            close(tr_ctx.loop_done_fds[1]);
         }
     }
     VDEBUG("loop done: %ld", sum);
 }
 
-
-int
-trace_on(void)
+void
+trace_on(struct tracer_ctx *tr_ctx)
 {
-    struct perf_event_attr attr;
-    pid_t parent_pid, child_pid;
-    int poll_fd, start_tracer_fds[2], stop_tracer_fds[2], res;
-    struct perf_event_mmap_page *header;
-    void *base, *data, *aux;
-    int page_size = getpagesize();
-    unsigned char byte;
+    int rc;
+
+    /* pipe used for the VM to flag the user loop is complete */
+    if (pipe(tr_ctx->loop_done_fds) != 0) {
+        err(EXIT_FAILURE, "pipe");
+    }
+
+    /* XXX destory/free mutexes */
+    pthread_cond_init(&tr_ctx->tracer_init_cv, NULL);
+    pthread_mutex_init(&tr_ctx->tracer_init_mutex, NULL);
+
+    rc = pthread_create(&tr_ctx->tracer_thread, NULL, do_tracer, (void *) tr_ctx);
+    if (rc) {
+        err(EXIT_FAILURE, "pthread_create");
+    }
+
+    VDEBUG("Wait for tracer to be ready...");
+    pthread_mutex_lock(&tr_ctx->tracer_init_mutex);
+    pthread_cond_wait(&tr_ctx->tracer_init_cv, &tr_ctx->tracer_init_mutex);
+    pthread_mutex_unlock(&tr_ctx->tracer_init_mutex);
 
     VDEBUG("Tracing hot loop");
+}
 
-    /*
-     * Processes synchronise via a pipe handshake. In a real VM you would
-     * probably use a thread with proper synchronisation primitives.
-     */
-    if (pipe(start_tracer_fds) != 0) {
-        err(EXIT_FAILURE, "pipe");
-    }
-    if (pipe(stop_tracer_fds) != 0) {
-        err(EXIT_FAILURE, "pipe");
-    }
-
-    parent_pid = getpid();
-    child_pid = fork();
-
-    switch (child_pid) {
-    case 0:
-        /* Child */
-        break;
-    case -1:
-        /* Error */
-        err(EXIT_FAILURE, "fork");
-        /* NOREACH*/
-        break;
-    default:
-        /* Parent -- wait for tracer to be ready, then resume */
-        close(start_tracer_fds[1]);
-        close(stop_tracer_fds[0]);
-        VDEBUG("Wait for tracer...");
-        for (;;) {
-            // XXX this should use poll
-            res = read(start_tracer_fds[0], &byte, 1);
-            if (res == -1) {
-                if (errno == EINTR) {
-                    continue;
-                } else {
-                    err(EXIT_FAILURE, "read");
-                }
-            } else if (res == 0) { // end of file, i.e. resume
-                break;
-            } else {
-                VDEBUG("Unexpected read result");
-                exit(EXIT_FAILURE);
-            }
-        }
-        VDEBUG("Resume under tracer...");
-        close(start_tracer_fds[0]);
-        return stop_tracer_fds[1];
-    }
+void *
+do_tracer(void *arg)
+{
+    struct perf_event_attr attr;
+    struct perf_event_mmap_page *header;
+    void *base, *data, *aux;
+    int page_size = getpagesize(), poll_fd;
+    struct tracer_ctx *tr_ctx = (struct tracer_ctx *) arg;
 
     /*
      * The tracer (child) now sets up the mmaped DATA and AUX buffers.
@@ -306,7 +294,7 @@ trace_on(void)
     //attr.aux_watermark = AUX_PAGES / 4 * getpagesize();
 
     /* XXX use named syscall function */
-    poll_fd = syscall(SYS_perf_event_open, &attr, parent_pid, -1, -1, 0);
+    poll_fd = syscall(SYS_perf_event_open, &attr, getpid(), -1, -1, 0);
     if (poll_fd == -1) {
         err(EXIT_FAILURE, "syscall");
     }
@@ -337,23 +325,24 @@ trace_on(void)
         err(EXIT_FAILURE, "open");
     }
 
-    /* Closing the write end of the pipe tells the VM to resume */
-    close(start_tracer_fds[0]);
-    close(start_tracer_fds[1]);
+    /* Resume the interpreter loop */
     if (ioctl(poll_fd, PERF_EVENT_IOC_ENABLE, 0) < 0)
         err(EXIT_FAILURE, "ioctl to start tracer");
-    close(stop_tracer_fds[1]);
+    TDEBUG("Telling VM that I (the tracer) am ready...");
+    pthread_mutex_lock(&tr_ctx->tracer_init_mutex);
+    pthread_cond_signal(&tr_ctx->tracer_init_cv);
+    pthread_mutex_unlock(&tr_ctx->tracer_init_mutex);
+    TDEBUG("done");
 
-    TDEBUG("Tracer initialised");
-    poll_loop(poll_fd, out_fd, header, aux, stop_tracer_fds[0]);
+    poll_loop(poll_fd, out_fd, header, aux, tr_ctx);
 
+    TDEBUG("Turning off Intel PT via ioctl");
     if (ioctl(poll_fd, PERF_EVENT_IOC_DISABLE, 0) < 0)
         err(EXIT_FAILURE, "ioctl to stop tracer");
 
     close(poll_fd);
     close(out_fd);
-    close(stop_tracer_fds[0]);
-    exit(EXIT_SUCCESS);
+    pthread_exit(NULL);
 }
 
 int
