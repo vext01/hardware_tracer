@@ -8,7 +8,7 @@ PT_PRIVATE_INC = deps/processor-trace/libipt/internal/include
 PT_CPU_SRC = deps/processor-trace/libipt/src
 PT_CPUID_SRC = deps/processor-trace/libipt/src/posix
 
-.PHONY: deps pt_cpu.c dis-trace
+.PHONY: deps pt_cpu.c dis-trace r2
 
 all: deps vm analyse
 
@@ -46,4 +46,9 @@ run: vm
 
 dis-trace:
 	base=`awk '$$2=="r-xp" && $$6~"vm" {split($$1,flds,"-"); print flds[1]}' maps` && \
-		sudo ./deps/inst/bin/ptxed -v --cpu auto --pt trace.data --raw vm:0x$${base} | less
+		sudo chmod 755 trace.data && \
+		./deps/inst/bin/ptxed -v --cpu auto --pt trace.data --raw vm:0x$${base} | less
+
+r2:
+	base=`awk '$$2=="r-xp" && $$6~"vm" {split($$1,flds,"-"); print flds[1]}' maps` && \
+		sudo chmod 755 trace.data && r2 -B 0x$${base} vm
