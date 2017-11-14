@@ -23,6 +23,7 @@
 #include <linux/perf_event.h>
 #include <linux/hw_breakpoint.h>
 #include <sys/ioctl.h>
+#include <semaphore.h>
 
 #define LARGE 15000
 #define HOT_THRESHOLD 1027
@@ -47,8 +48,7 @@ struct tracer_ctx {
     /* tracer thread itself */
     pthread_t           tracer_thread;
     /* thread synchronisation stuff */
-    pthread_cond_t      tracer_init_cv;
-    pthread_mutex_t     tracer_init_mutex;
+    sem_t               tracer_init_sem;
     /* pipe used to tell the poll loop that the interp loop is finished */
     int                 loop_done_fds[2];
     /* fd used to talk to the perf event layer */
@@ -160,8 +160,8 @@ poll_loop(int out_fd, struct perf_event_mmap_page *mmap_header,
             err(EXIT_FAILURE, "poll");
         }
 
-        if (pfds[0].revents & POLLIN) {
-            /* We were awoken to read out trace info */
+        if ((pfds[0].revents & POLLIN) || (pfds[1].revents & POLLHUP)) {
+            /* We were awoken to read out trace info, or we tracing stopped */
             num_wakes++;
             TDEBUG("Wake");
             TDEBUG("aux_head=  0x%010llu", mmap_header->aux_head);
@@ -172,25 +172,9 @@ poll_loop(int out_fd, struct perf_event_mmap_page *mmap_header,
             read_circular_buf(aux, mmap_header->aux_size,
                 mmap_header->aux_head, &mmap_header->aux_tail, out_fd);
 
-            if (pfds[1].fd == -1) {
-                /* The tracer was switched off */
+            if (pfds[1].revents & POLLHUP) {
                 break;
             }
-        }
-
-        if (pfds[1].revents & POLLHUP) {
-            /* Turn the tracer off after the next buffer read */
-
-            /*
-             * XXX can we flush and read now somehow?
-             *
-             * http://stackoverflow.com/questions/42066651/perf-event-open-is-it-possible-to-explicitly-flush-the-data-aux-mmap-buffers
-             */
-            read_circular_buf(aux, mmap_header->aux_size,
-                mmap_header->aux_head, &mmap_header->aux_tail, out_fd);
-
-            TDEBUG("Tracing terminated");
-            pfds[1].fd = -1; /* no more events on this fd please */
         }
 
         if (pfds[0].revents & POLLHUP) {
@@ -217,6 +201,7 @@ interpreter_loop()
     for (i = 0; i < LARGE; i++) {
         /* "JIT Merge Point" */
         if (i == HOT_THRESHOLD) {
+            VDEBUG("Hot loop start");
             trace_on(&tr_ctx);
         }
 
@@ -229,11 +214,19 @@ interpreter_loop()
         }
 
         if (i == HOT_THRESHOLD) {
+            VDEBUG("Hot loop end");
             if (ioctl(tr_ctx.perf_fd, PERF_EVENT_IOC_DISABLE, 0) < 0)
                 err(EXIT_FAILURE, "ioctl to stop tracer");
-            close(tr_ctx.loop_done_fds[1]);
+
+            if (close(tr_ctx.loop_done_fds[1]) == -1) {
+                err(EXIT_FAILURE, "close");
+            }
             TDEBUG("Turned off tracer");
         }
+    }
+    VDEBUG("Waiting for tracer thread to terminate");
+    if (pthread_join(tr_ctx.tracer_thread, NULL) != 0) {
+        err(EXIT_FAILURE, "pthread_join");
     }
     VDEBUG("loop done: %ld", sum);
 }
@@ -248,9 +241,11 @@ trace_on(struct tracer_ctx *tr_ctx)
         err(EXIT_FAILURE, "pipe");
     }
 
-    /* XXX destory/free mutexes */
-    pthread_cond_init(&tr_ctx->tracer_init_cv, NULL);
-    pthread_mutex_init(&tr_ctx->tracer_init_mutex, NULL);
+    /* Use a semaphore to wait for the tracer to be ready */
+    rc = sem_init(&tr_ctx->tracer_init_sem, 0, 0);
+    if (rc == -1) {
+        err(EXIT_FAILURE, "sem_init");
+    }
 
     rc = pthread_create(&tr_ctx->tracer_thread, NULL, do_tracer, (void *) tr_ctx);
     if (rc) {
@@ -258,11 +253,8 @@ trace_on(struct tracer_ctx *tr_ctx)
     }
 
     VDEBUG("Wait for tracer to be ready...");
-    pthread_mutex_lock(&tr_ctx->tracer_init_mutex);
-    pthread_cond_wait(&tr_ctx->tracer_init_cv, &tr_ctx->tracer_init_mutex);
-    pthread_mutex_unlock(&tr_ctx->tracer_init_mutex);
-
-    VDEBUG("Tracing hot loop");
+    sem_wait(&tr_ctx->tracer_init_sem);
+    VDEBUG("Resuming interpreter loop");
 }
 
 void *
@@ -331,19 +323,22 @@ do_tracer(void *arg)
         err(EXIT_FAILURE, "open");
     }
 
-    /* Resume the interpreter loop */
+    /* Turn on Intel PT */
     if (ioctl(tr_ctx->perf_fd, PERF_EVENT_IOC_ENABLE, 0) < 0)
         err(EXIT_FAILURE, "ioctl to start tracer");
-    TDEBUG("Telling VM that I (the tracer) am ready...");
-    pthread_mutex_lock(&tr_ctx->tracer_init_mutex);
-    pthread_cond_signal(&tr_ctx->tracer_init_cv);
-    pthread_mutex_unlock(&tr_ctx->tracer_init_mutex);
-    TDEBUG("done");
 
+    /* Resume the interpreter loop */
+    TDEBUG("Signalling the VM to continue");
+    sem_post(&tr_ctx->tracer_init_sem);
+
+    /* Start reading out of the aux buffer */
     poll_loop(out_fd, header, aux, tr_ctx);
 
+    /* Clean up an terminate thread */
     close(tr_ctx->perf_fd);
     close(out_fd);
+
+    VDEBUG("Tracer thread exiting");
     pthread_exit(NULL);
 }
 
