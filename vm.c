@@ -53,12 +53,16 @@ struct tracer_ctx {
     int                 loop_done_fds[2];
     /* fd used to talk to the perf event layer */
     int                 perf_fd;
+    /* PT-related stuff */
+    int                         out_fd;         /* Trace written here */
+    struct perf_event_mmap_page *mmap_header;   /* Info about the aux buffer */
+    void                        *aux;           /* Aux buffer itself */
 };
 
 /* Protos */
 void trace_on(struct tracer_ctx *);
 void interpreter_loop(void);
-void poll_loop(int, struct perf_event_mmap_page *, void *, struct tracer_ctx *);
+void poll_loop(struct tracer_ctx *);
 void read_circular_buf(void *, __u64, __u64, __u64 *, int);
 void write_buf_to_disk(int, void *, __u64);
 void stash_maps(void);
@@ -144,9 +148,10 @@ read_circular_buf(void *buf, __u64 size, __u64 head_monotonic, __u64 *tail_p, in
  * Take trace data out of the AUX buffer.
  */
 void
-poll_loop(int out_fd, struct perf_event_mmap_page *mmap_header,
-    void *aux, struct tracer_ctx *tr_ctx)
+poll_loop(struct tracer_ctx *tr_ctx)
 {
+    void *aux = tr_ctx->aux;
+    struct perf_event_mmap_page *mmap_header = tr_ctx->mmap_header;
     struct pollfd pfds[2] = {
         {tr_ctx->perf_fd, POLLIN | POLLHUP, 0},
         {tr_ctx->loop_done_fds[0], POLLHUP, 0}
@@ -170,7 +175,7 @@ poll_loop(int out_fd, struct perf_event_mmap_page *mmap_header,
             TDEBUG("aux_size=  0x%010llu", mmap_header->aux_size);
 
             read_circular_buf(aux, mmap_header->aux_size,
-                mmap_header->aux_head, &mmap_header->aux_tail, out_fd);
+                mmap_header->aux_head, &mmap_header->aux_tail, tr_ctx->out_fd);
 
             if (pfds[1].revents & POLLHUP) {
                 break;
@@ -314,6 +319,7 @@ do_tracer(void *arg)
     (void) data; /* XXX We will need this in the future to detect packet loss */
     header->aux_offset = header->data_offset + header->data_size;
     header->aux_size = AUX_PAGES * page_size;
+    tr_ctx->mmap_header = header;
 
     /* AUX mapped R/W so as to have a saturating ring buffer */
     aux = mmap(NULL, header->aux_size, PROT_READ | PROT_WRITE,
@@ -321,10 +327,11 @@ do_tracer(void *arg)
     if (aux == MAP_FAILED) {
         err(EXIT_FAILURE, "mmap2");
     }
+    tr_ctx->aux = aux;
 
     /* Open output file */
-    int out_fd = open(TRACE_OUTPUT, O_WRONLY | O_CREAT | O_TRUNC);
-    if (out_fd < 0) {
+    tr_ctx->out_fd = open(TRACE_OUTPUT, O_WRONLY | O_CREAT | O_TRUNC);
+    if (tr_ctx->out_fd < 0) {
         err(EXIT_FAILURE, "open");
     }
 
@@ -337,11 +344,11 @@ do_tracer(void *arg)
     sem_post(&tr_ctx->tracer_init_sem);
 
     /* Start reading out of the aux buffer */
-    poll_loop(out_fd, header, aux, tr_ctx);
+    poll_loop(tr_ctx);
 
     /* Clean up an terminate thread */
     close(tr_ctx->perf_fd);
-    close(out_fd);
+    close(tr_ctx->out_fd);
 
     VDEBUG("Tracer thread exiting");
     pthread_exit(NULL);
