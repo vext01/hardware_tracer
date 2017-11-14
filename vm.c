@@ -51,12 +51,14 @@ struct tracer_ctx {
     pthread_mutex_t     tracer_init_mutex;
     /* pipe used to tell the poll loop that the interp loop is finished */
     int                 loop_done_fds[2];
+    /* fd used to talk to the perf event layer */
+    int                 perf_fd;
 };
 
 /* Protos */
 void trace_on(struct tracer_ctx *);
 void interpreter_loop(void);
-void poll_loop(int, int, struct perf_event_mmap_page *, void *, struct tracer_ctx *);
+void poll_loop(int, struct perf_event_mmap_page *, void *, struct tracer_ctx *);
 void read_circular_buf(void *, __u64, __u64, __u64 *, int);
 void write_buf_to_disk(int, void *, __u64);
 void stash_maps(void);
@@ -142,11 +144,11 @@ read_circular_buf(void *buf, __u64 size, __u64 head_monotonic, __u64 *tail_p, in
  * Take trace data out of the AUX buffer.
  */
 void
-poll_loop(int perf_fd, int out_fd, struct perf_event_mmap_page *mmap_header,
+poll_loop(int out_fd, struct perf_event_mmap_page *mmap_header,
     void *aux, struct tracer_ctx *tr_ctx)
 {
     struct pollfd pfds[2] = {
-        {perf_fd, POLLIN | POLLHUP, 0},
+        {tr_ctx->perf_fd, POLLIN | POLLHUP, 0},
         {tr_ctx->loop_done_fds[0], POLLHUP, 0}
     };
     int n_events = 0;
@@ -184,6 +186,8 @@ poll_loop(int perf_fd, int out_fd, struct perf_event_mmap_page *mmap_header,
              *
              * http://stackoverflow.com/questions/42066651/perf-event-open-is-it-possible-to-explicitly-flush-the-data-aux-mmap-buffers
              */
+            read_circular_buf(aux, mmap_header->aux_size,
+                mmap_header->aux_head, &mmap_header->aux_tail, out_fd);
 
             TDEBUG("Tracing terminated");
             pfds[1].fd = -1; /* no more events on this fd please */
@@ -225,8 +229,10 @@ interpreter_loop()
         }
 
         if (i == HOT_THRESHOLD) {
-            VDEBUG("Tell tracer to stop");
+            if (ioctl(tr_ctx.perf_fd, PERF_EVENT_IOC_DISABLE, 0) < 0)
+                err(EXIT_FAILURE, "ioctl to stop tracer");
             close(tr_ctx.loop_done_fds[1]);
+            TDEBUG("Turned off tracer");
         }
     }
     VDEBUG("loop done: %ld", sum);
@@ -265,7 +271,7 @@ do_tracer(void *arg)
     struct perf_event_attr attr;
     struct perf_event_mmap_page *header;
     void *base, *data, *aux;
-    int page_size = getpagesize(), poll_fd;
+    int page_size = getpagesize();
     struct tracer_ctx *tr_ctx = (struct tracer_ctx *) arg;
 
     /*
@@ -294,14 +300,14 @@ do_tracer(void *arg)
     //attr.aux_watermark = AUX_PAGES / 4 * getpagesize();
 
     /* XXX use named syscall function */
-    poll_fd = syscall(SYS_perf_event_open, &attr, getpid(), -1, -1, 0);
-    if (poll_fd == -1) {
+    tr_ctx->perf_fd = syscall(SYS_perf_event_open, &attr, getpid(), -1, -1, 0);
+    if (tr_ctx->perf_fd == -1) {
         err(EXIT_FAILURE, "syscall");
     }
 
     /* Data buffer is preceeded by one management page, hence +1 */
     base = mmap(NULL, (1 + DATA_PAGES) * page_size, PROT_WRITE,
-        MAP_SHARED, poll_fd, 0);
+        MAP_SHARED, tr_ctx->perf_fd, 0);
     if (base == MAP_FAILED) {
         err(EXIT_FAILURE, "mmap");
     }
@@ -314,7 +320,7 @@ do_tracer(void *arg)
 
     /* AUX mapped R/W so as to have a saturating ring buffer */
     aux = mmap(NULL, header->aux_size, PROT_READ | PROT_WRITE,
-        MAP_SHARED, poll_fd, header->aux_offset);
+        MAP_SHARED, tr_ctx->perf_fd, header->aux_offset);
     if (aux == MAP_FAILED) {
         err(EXIT_FAILURE, "mmap2");
     }
@@ -326,7 +332,7 @@ do_tracer(void *arg)
     }
 
     /* Resume the interpreter loop */
-    if (ioctl(poll_fd, PERF_EVENT_IOC_ENABLE, 0) < 0)
+    if (ioctl(tr_ctx->perf_fd, PERF_EVENT_IOC_ENABLE, 0) < 0)
         err(EXIT_FAILURE, "ioctl to start tracer");
     TDEBUG("Telling VM that I (the tracer) am ready...");
     pthread_mutex_lock(&tr_ctx->tracer_init_mutex);
@@ -334,13 +340,9 @@ do_tracer(void *arg)
     pthread_mutex_unlock(&tr_ctx->tracer_init_mutex);
     TDEBUG("done");
 
-    poll_loop(poll_fd, out_fd, header, aux, tr_ctx);
+    poll_loop(out_fd, header, aux, tr_ctx);
 
-    TDEBUG("Turning off Intel PT via ioctl");
-    if (ioctl(poll_fd, PERF_EVENT_IOC_DISABLE, 0) < 0)
-        err(EXIT_FAILURE, "ioctl to stop tracer");
-
-    close(poll_fd);
+    close(tr_ctx->perf_fd);
     close(out_fd);
     pthread_exit(NULL);
 }
