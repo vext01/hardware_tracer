@@ -257,6 +257,9 @@ trace_on(struct tracer_ctx *tr_ctx)
     VDEBUG("Resuming interpreter loop");
 }
 
+/*
+ * Set up Intel PT buffers and start a poll() loop for reading out the trace
+ */
 void *
 do_tracer(void *arg)
 {
@@ -266,24 +269,22 @@ do_tracer(void *arg)
     int page_size = getpagesize();
     struct tracer_ctx *tr_ctx = (struct tracer_ctx *) arg;
 
-    /*
-     * The tracer (child) now sets up the mmaped DATA and AUX buffers.
-     */
     TDEBUG("Tracer initialising");
 
-    // attr.sample_id_all = 1; XXX YYY needed?
+    /* Basic configuration */
     memset(&attr, 0, sizeof(attr));
     attr.size = sizeof(attr);
     attr.type = 7; /* XXX Read from /sys/bus/event_source/devices/intel_pt/type */
     attr.size = sizeof(struct perf_event_attr);
 
-    /* Stuff to exclude */
+    /* Exclude the kernel */
     attr.exclude_kernel = 1;
-    attr.exclude_hv = 1; // hypervisor
 
-    /* Pure magic */
+    /* Exclude the hypervisor */
+    attr.exclude_hv = 1;
+
+    /* Intel PT specific configuration */
     //attr.config = 50382338;
-    //attr.read_format = 4;
 
     /* Start disabled */
     attr.disabled = 1;
@@ -291,13 +292,17 @@ do_tracer(void *arg)
     /* Wake when 25% of AUX buf written */
     //attr.aux_watermark = AUX_PAGES / 4 * getpagesize();
 
-    /* XXX use named syscall function */
+    /* Acquire file descriptor through which to talk to Intel PT */
     tr_ctx->perf_fd = syscall(SYS_perf_event_open, &attr, getpid(), -1, -1, 0);
     if (tr_ctx->perf_fd == -1) {
         err(EXIT_FAILURE, "syscall");
     }
 
-    /* Data buffer is preceeded by one management page, hence +1 */
+    /*
+     * Allocate buffers
+     *
+     * Data buffer is preceeded by one management page, hence `1 + DATA_PAGES'
+     */
     base = mmap(NULL, (1 + DATA_PAGES) * page_size, PROT_WRITE,
         MAP_SHARED, tr_ctx->perf_fd, 0);
     if (base == MAP_FAILED) {
