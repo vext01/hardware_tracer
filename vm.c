@@ -7,21 +7,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <signal.h>
 #include <string.h>
-#include <fcntl.h>
 #include <err.h>
+#include <fcntl.h>
 #include <syscall.h>
 #include <sys/mman.h>
 #include <poll.h>
 #include <inttypes.h>
 #include <errno.h>
 #include <pthread.h>
-
 #include <limits.h>
 #include <linux/perf_event.h>
-#include <linux/perf_event.h>
-#include <linux/hw_breakpoint.h>
 #include <sys/ioctl.h>
 #include <semaphore.h>
 
