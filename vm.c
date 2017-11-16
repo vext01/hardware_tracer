@@ -28,8 +28,8 @@
 /* Debug helpers */
 #define DPRINTF(who, x...)                                      \
     do {                                                        \
-        fprintf(stderr, "[%s:%d](%s:%s:%d): ",              \
-            who, getpid(), __func__, __FILE__, __LINE__);   \
+        fprintf(stderr, "[%s](%s:%s:%d): ",              \
+            who, __func__, __FILE__, __LINE__);   \
         fprintf(stderr, x);                                 \
         fprintf(stderr, "\n");                              \
     } while (0)
