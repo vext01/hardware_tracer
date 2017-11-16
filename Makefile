@@ -28,7 +28,7 @@ analyse: analyse.c pt_cpu.o pt_cpuid.o
 	${CC} ${CFLAGS} -I${IPT_INC} -Wl,-rpath=${IPT_LIB} -L${IPT_LIB} -lipt ${LDFLAGS} $^ -o $@
 
 vm: vm.c
-	${CC} ${CFLAGS} -pthread ${LDFLAGS} $^ -o $@
+	${CC} ${CFLAGS} -O0 -pthread ${LDFLAGS} $^ -o $@
 
 
 # get instructions
@@ -47,7 +47,7 @@ run: vm
 dis-trace:
 	base=`awk '$$2=="r-xp" && $$6~"vm" {split($$1,flds,"-"); print flds[1]}' maps` && \
 		sudo chmod 755 trace.data && \
-		./deps/inst/bin/ptxed -v --cpu auto --pt trace.data --raw vm:0x$${base} | less
+		./deps/inst/bin/ptxed -v --cpu auto --pt trace.data --raw vm:0x$${base}
 
 r2:
 	base=`awk '$$2=="r-xp" && $$6~"vm" {split($$1,flds,"-"); print flds[1]}' maps` && \
