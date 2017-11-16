@@ -38,7 +38,7 @@
 
 /* mmaped buffer sizes (in pages). Must be powers of 2! */
 #define DATA_PAGES 1024
-#define AUX_PAGES 8192
+#define AUX_PAGES 16
 
 struct tracer_ctx {
     /* tracer thread itself */
@@ -49,6 +49,8 @@ struct tracer_ctx {
     int                 loop_done_fds[2];
     /* fd used to talk to the perf event layer */
     int                 perf_fd;
+    /* PID of the interpreter loop */
+    pid_t               interp_pid;
     /* PT-related stuff */
     int                         out_fd;         /* Trace written here */
     struct perf_event_mmap_page *mmap_header;   /* Info about the aux buffer */
@@ -119,7 +121,9 @@ void write_buf_to_disk(int fd, void *buf, __u64 size) {
 void
 read_circular_buf(void *buf, __u64 size, __u64 head_monotonic, __u64 *tail_p, int out_fd) {
     __u64 tail = *tail_p;
-    __u64 head = head_monotonic % size; /* head must be manually wrapped */
+    __u64 head = head_monotonic;
+
+    head = head % size; /* head must be manually wrapped */
 
     if (tail <= head) {
         /* No wrap-around */
@@ -147,6 +151,7 @@ void
 poll_loop(struct tracer_ctx *tr_ctx)
 {
     void *aux = tr_ctx->aux;
+    __u64 head;
     struct perf_event_mmap_page *mmap_header = tr_ctx->mmap_header;
     struct pollfd pfds[2] = {
         {tr_ctx->perf_fd, POLLIN | POLLHUP, 0},
@@ -162,20 +167,25 @@ poll_loop(struct tracer_ctx *tr_ctx)
         }
 
         if ((pfds[0].revents & POLLIN) || (pfds[1].revents & POLLHUP)) {
+            /* See <linux/perf_event.h> for why we need the asm block */
+            head = mmap_header->aux_head;
+            asm volatile ("" : : : "memory");
+
             /* We were awoken to read out trace info, or we tracing stopped */
             num_wakes++;
             TDEBUG("Wake");
-            TDEBUG("aux_head=  0x%010llu", mmap_header->aux_head);
+            TDEBUG("aux_head=  0x%010llu", head);
             TDEBUG("aux_tail=  0x%010llu", mmap_header->aux_tail);
             TDEBUG("aux_offset=0x%010llu", mmap_header->aux_offset);
             TDEBUG("aux_size=  0x%010llu", mmap_header->aux_size);
 
             read_circular_buf(aux, mmap_header->aux_size,
-                mmap_header->aux_head, &mmap_header->aux_tail, tr_ctx->out_fd);
+                head, &mmap_header->aux_tail, tr_ctx->out_fd);
 
             if (pfds[1].revents & POLLHUP) {
                 break;
             }
+            //pfds[1].fd = -1;
         }
 
         if (pfds[0].revents & POLLHUP) {
@@ -192,10 +202,11 @@ interpreter_loop()
 {
     long sum = 4;
     int i;
-    volatile int j;
     struct tracer_ctx tr_ctx;
+    pid_t p = getpid();
 
     memset(&tr_ctx, 0, sizeof(tr_ctx));
+    tr_ctx.interp_pid = getpid();
 
     VDEBUG("Running interpreter loop...");
 
@@ -204,14 +215,28 @@ interpreter_loop()
         if (i == HOT_THRESHOLD) {
             VDEBUG("Hot loop start");
             trace_on(&tr_ctx);
+            sleep(1);
         }
 
-        for (j = 0; j < 10000; j++) {
-            if (j % 2 == 0) {
-                sum += i * 2 % 33;
+        for (int j = 0; j < 1000; j++) {
+            /* Start Marker*/
+            asm volatile(
+                "nop\n\t"
+                "nop\n\t"
+                "nop\n\t"
+                :::);
+
+            if (i % getpid() == 0) {
+                sum += i * p % 33;
             } else {
-                sum += i * 5 % 67;
+                sum += i * 5 % 67 + p;
             }
+
+            /* Stop Marker*/
+            asm volatile(
+                "nop\n\t"
+                "nop\n\t"
+                :::);
         }
 
         if (i == HOT_THRESHOLD) {
@@ -284,17 +309,14 @@ do_tracer(void *arg)
     /* Exclude the hypervisor */
     attr.exclude_hv = 1;
 
-    /* Intel PT specific configuration */
-    //attr.config = 50382338;
-
     /* Start disabled */
     attr.disabled = 1;
 
-    /* Wake when 25% of AUX buf written */
-    //attr.aux_watermark = AUX_PAGES / 4 * getpagesize();
+    /* No skid */
+    attr.precise_ip = 3;
 
     /* Acquire file descriptor through which to talk to Intel PT */
-    tr_ctx->perf_fd = syscall(SYS_perf_event_open, &attr, getpid(), -1, -1, 0);
+    tr_ctx->perf_fd = syscall(SYS_perf_event_open, &attr, tr_ctx->interp_pid, -1, -1, 0);
     if (tr_ctx->perf_fd == -1) {
         err(EXIT_FAILURE, "syscall");
     }
@@ -332,6 +354,8 @@ do_tracer(void *arg)
     }
 
     /* Turn on Intel PT */
+    if (ioctl(tr_ctx->perf_fd, PERF_EVENT_IOC_RESET, 0) < 0)
+        err(EXIT_FAILURE, "ioctl to start tracer");
     if (ioctl(tr_ctx->perf_fd, PERF_EVENT_IOC_ENABLE, 0) < 0)
         err(EXIT_FAILURE, "ioctl to start tracer");
 
