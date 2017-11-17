@@ -215,29 +215,26 @@ interpreter_loop()
         if (i == HOT_THRESHOLD) {
             VDEBUG("Hot loop start");
             trace_on(&tr_ctx);
-            sleep(1);
         }
 
-        for (int j = 0; j < 1000; j++) {
-            /* Start Marker*/
-            asm volatile(
-                "nop\n\t"
-                "nop\n\t"
-                "nop\n\t"
-                :::);
+        /* Start Marker*/
+        asm volatile(
+            "nop 0x666\n\t"
+            "nop 0x666\n\t"
+            "nop 0x666\n\t"
+            :::);
 
-            if (i % getpid() == 0) {
-                sum += i * p % 33;
-            } else {
-                sum += i * 5 % 67 + p;
-            }
-
-            /* Stop Marker*/
-            asm volatile(
-                "nop\n\t"
-                "nop\n\t"
-                :::);
+        if (i % getpid() == 0) {
+            sum += i * p % 33;
+        } else {
+            sum += i * 5 % 67 + p;
         }
+
+        /* Stop Marker*/
+        asm volatile(
+            "nop 0x777\n\t"
+            "nop 0x777\n\t"
+            :::);
 
         if (i == HOT_THRESHOLD) {
             VDEBUG("Hot loop end");
