@@ -8,7 +8,7 @@ PT_PRIVATE_INC = deps/processor-trace/libipt/internal/include
 PT_CPU_SRC = deps/processor-trace/libipt/src
 PT_CPUID_SRC = deps/processor-trace/libipt/src/posix
 
-.PHONY: deps pt_cpu.c dis-trace r2
+.PHONY: deps pt_cpu.c dis dump r2
 
 all: deps vm analyse
 
@@ -30,10 +30,6 @@ analyse: analyse.c pt_cpu.o pt_cpuid.o
 vm: vm.c
 	${CC} ${CFLAGS} -O0 -pthread ${LDFLAGS} $^ -o $@
 
-
-# get instructions
-# ./deps/inst/bin/ptxed -v --cpu auto --pt trace.pt --raw vm:<base-addr> | less
-
 run: vm
 	sudo ./vm
 
@@ -44,11 +40,15 @@ run: vm
 	base=`head -1  maps | awk '{sub(/-.*/, "", $$1); print "0x" $$1}'` && \
 	     echo "#!/bin/sh\nr2 -B $${base} vm" > dis.sh
 
-dis-trace:
-	base=`awk '$$2=="r-xp" && $$6~"vm" {split($$1,flds,"-"); print flds[1]}' maps` && \
-		sudo chmod 755 trace.data && \
-		./deps/inst/bin/ptxed -v --cpu auto --pt trace.data --raw vm:0x$${base}
+# disassemble trace to asm
+dis:
+	python3 run_ptxed.py trace.data maps | less
 
+# dump raw PT packets
+dump:
+	./deps/inst/bin/ptdump trace.data | less
+
+# Open binary in radare2 (does not yet relocate libs)
 r2:
 	base=`awk '$$2=="r-xp" && $$6~"vm" {split($$1,flds,"-"); print flds[1]}' maps` && \
 		sudo chmod 755 trace.data && r2 -B 0x$${base} vm
